@@ -10,14 +10,14 @@ import binascii
 from queue import Queue
 from threading import Event
 
-# MQTT Configuration
+# MQTT Configuration - Users MUST enter their own details
 MQTT_CONFIG = {
-    "MQTT_BROKER": "w8e06e1d.ala.asia-southeast1.emqxsl.com",
+    "MQTT_BROKER": "",
     "MQTT_PORT": 8883,
-    "MQTT_TOPIC": "vehicle/bin_Data/data",
-    "MQTT_TX_COMMAND_TOPIC": "vehicle/tx_cmd",
-    "MQTT_USERNAME": "PRUDHVI",
-    "MQTT_PASSWORD": "PRUDHVI"
+    "MQTT_TOPIC": "",
+    "MQTT_TX_COMMAND_TOPIC": "",
+    "MQTT_USERNAME": "",
+    "MQTT_PASSWORD": ""
 }
 
 CHUNK_SIZE = 250  # bytes
@@ -66,12 +66,16 @@ def create_payload(chunk_data, chunk_num, total_chunks, filename, file_size):
     return json.dumps(payload)
 
 class MQTTClient:
-    def __init__(self):
+    def __init__(self, config=None):
         try:
             self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
         except AttributeError:
             self.client = mqtt.Client()
-        self.client.username_pw_set(MQTT_CONFIG["MQTT_USERNAME"], MQTT_CONFIG["MQTT_PASSWORD"])
+        
+        # Use provided config or default
+        self.config = config if config else MQTT_CONFIG
+        
+        self.client.username_pw_set(self.config["MQTT_USERNAME"], self.config["MQTT_PASSWORD"])
         self.client.tls_set(ca_certs=None, certfile=None, keyfile=None, cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLSv1_2, ciphers=None)
         self.client.tls_insecure_set(False)
         self.client.on_connect = self.on_connect
@@ -105,11 +109,12 @@ class MQTTClient:
         except:
             pass
     
-    def connect(self):
+    def connect(self, config=None):
         try:
-            self.client.connect(MQTT_CONFIG["MQTT_BROKER"], MQTT_CONFIG["MQTT_PORT"], keepalive=60)
-            self.client.subscribe(MQTT_CONFIG["MQTT_TOPIC"], qos=1)
-            self.client.subscribe(MQTT_CONFIG["MQTT_TX_COMMAND_TOPIC"], qos=1)
+            cfg = config if config else self.config
+            self.client.connect(cfg["MQTT_BROKER"], cfg["MQTT_PORT"], keepalive=60)
+            self.client.subscribe(cfg["MQTT_TOPIC"], qos=1)
+            self.client.subscribe(cfg["MQTT_TX_COMMAND_TOPIC"], qos=1)
             self.client.loop_start()
             return True
         except Exception as e:
@@ -146,8 +151,9 @@ class MQTTClient:
 def send_initial_payload(mqtt_client, status_placeholder):
     """Send initial handshake payload"""
     payload = json.dumps({"T": 14, "S": 86, "D": 1})
-    mqtt_client.publish(MQTT_CONFIG["MQTT_TX_COMMAND_TOPIC"], payload)
-    status_placeholder.info("📤 Sent initial payload (T=14, S=86, D=1) to vehicle/tx_cmd")
+    cfg = mqtt_client.config
+    mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
+    status_placeholder.info("📤 Sent initial payload (T=14, S=86, D=1) to " + cfg["MQTT_TX_COMMAND_TOPIC"])
     status_placeholder.info("⏳ Waiting for response... (30 seconds)")
     
     # Wait longer for initial response
@@ -173,8 +179,9 @@ def send_second_payload(mqtt_client, status_placeholder):
             "size": 162536
         }
     })
-    mqtt_client.publish(MQTT_CONFIG["MQTT_TX_COMMAND_TOPIC"], payload)
-    status_placeholder.info("📤 Sent second payload (T=15, S=78) with URL and CRC info to vehicle/tx_cmd")
+    cfg = mqtt_client.config
+    mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
+    status_placeholder.info("📤 Sent second payload (T=15, S=78) with URL and CRC info to " + cfg["MQTT_TX_COMMAND_TOPIC"])
     status_placeholder.info("⏳ Waiting for response... (30 seconds)")
     
     # Wait longer for response
@@ -192,8 +199,9 @@ def send_second_payload(mqtt_client, status_placeholder):
 def send_download_command(mqtt_client, status_placeholder):
     """Send download start command"""
     payload = json.dumps({"T": 16, "S": 86, "D": 1})
-    mqtt_client.publish(MQTT_CONFIG["MQTT_TX_COMMAND_TOPIC"], payload)
-    status_placeholder.info("📤 Sent download command (T=16, S=86, D=1) to vehicle/tx_cmd")
+    cfg = mqtt_client.config
+    mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
+    status_placeholder.info("📤 Sent download command (T=16, S=86, D=1) to " + cfg["MQTT_TX_COMMAND_TOPIC"])
     status_placeholder.info("⏳ Waiting for first offset/size request... (30 seconds)")
     
     # Wait longer for first device request
@@ -237,8 +245,9 @@ def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder,
             }
         })
         
-        mqtt_client.publish(MQTT_CONFIG["MQTT_TX_COMMAND_TOPIC"], payload)
-        status_placeholder.success(f"✅ Sent {len(chunk)} bytes from offset {offset}")
+        cfg = mqtt_client.config
+        mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
+        status_placeholder.success(f"✅ Sent {len(chunk)} bytes from offset {offset} to {cfg['MQTT_TX_COMMAND_TOPIC']}")
         
         # Calculate and show progress
         progress = (end_offset / len(file_bytes)) if len(file_bytes) > 0 else 0
@@ -346,31 +355,116 @@ if "is_sending" not in st.session_state:
 if "status_message" not in st.session_state:
     st.session_state.status_message = "Ready"
 
+# Initialize custom MQTT config
+if "custom_mqtt_config" not in st.session_state:
+    st.session_state.custom_mqtt_config = MQTT_CONFIG.copy()
+if "use_custom_config" not in st.session_state:
+    st.session_state.use_custom_config = False
+
 # Sidebar Configuration
 with st.sidebar:
-    st.header("MQTT Configuration")
-    st.json(MQTT_CONFIG)
+    st.header("⚙️ MQTT Configuration")
+    st.warning("⚠️ Configure MQTT settings to continue", icon="⚠️")
     
-    # Connection Status
-    status_col = st.columns([3, 1])
-    with status_col[0]:
-        st.text(f"Status: {st.session_state.status_message}")
-    
-    with status_col[1]:
-        if st.session_state.mqtt_client is None or not st.session_state.mqtt_client.connected:
-            if st.button("🔗 Connect", use_container_width=True):
-                mqtt_client = MQTTClient()
-                if mqtt_client.connect():
+    with st.form("mqtt_config_form"):
+        st.subheader("🖥️ Broker Settings")
+        broker = st.text_input(
+            "MQTT Broker Address",
+            value=st.session_state.custom_mqtt_config.get("MQTT_BROKER", ""),
+            placeholder="e.g., w8e06e1d.ala.asia-southeast1.emqxsl.com",
+            help="Your MQTT broker hostname or IP address"
+        )
+        port = st.number_input(
+            "MQTT Port",
+            value=st.session_state.custom_mqtt_config.get("MQTT_PORT", 8883),
+            min_value=1,
+            max_value=65535,
+            help="Usually 8883 for secure connection, 1883 for non-secure"
+        )
+        
+        st.subheader("🔐 Authentication")
+        username = st.text_input(
+            "Username",
+            value=st.session_state.custom_mqtt_config.get("MQTT_USERNAME", ""),
+            placeholder="Enter your MQTT username"
+        )
+        password = st.text_input(
+            "Password",
+            value=st.session_state.custom_mqtt_config.get("MQTT_PASSWORD", ""),
+            type="password",
+            placeholder="Enter your MQTT password"
+        )
+        
+        st.subheader("📝 Topics")
+        data_topic = st.text_input(
+            "Data Topic (receive)",
+            value=st.session_state.custom_mqtt_config.get("MQTT_TOPIC", ""),
+            placeholder="e.g., vehicle/bin_Data/data",
+            help="Topic where device sends responses"
+        )
+        cmd_topic = st.text_input(
+            "Command Topic (send)",
+            value=st.session_state.custom_mqtt_config.get("MQTT_TX_COMMAND_TOPIC", ""),
+            placeholder="e.g., vehicle/tx_cmd",
+            help="Topic where you send commands and file data"
+        )
+        
+        if st.form_submit_button("✅ Save & Connect", use_container_width=True):
+            # Validate all fields are filled
+            if not all([broker, username, password, data_topic, cmd_topic]):
+                st.error("❌ All fields are required!")
+            else:
+                # Update custom config
+                st.session_state.custom_mqtt_config = {
+                    "MQTT_BROKER": broker,
+                    "MQTT_PORT": int(port),
+                    "MQTT_USERNAME": username,
+                    "MQTT_PASSWORD": password,
+                    "MQTT_TOPIC": data_topic,
+                    "MQTT_TX_COMMAND_TOPIC": cmd_topic
+                }
+                st.session_state.use_custom_config = True
+                
+                # Auto-connect
+                mqtt_client = MQTTClient(st.session_state.custom_mqtt_config)
+                if mqtt_client.connect(st.session_state.custom_mqtt_config):
                     st.session_state.mqtt_client = mqtt_client
+                    st.success("✅ Configuration saved and connected!")
                     time.sleep(1)
                     st.rerun()
-        else:
-            if st.button("🔌 Disconnect", use_container_width=True):
-                st.session_state.mqtt_client.disconnect()
-                st.session_state.mqtt_client = None
-                st.rerun()
+                else:
+                    st.error("❌ Failed to connect to MQTT broker. Check your settings.")
+    
+    st.divider()
+    
+    # Show connection status
+    if st.session_state.mqtt_client and st.session_state.mqtt_client.connected:
+        st.success(f"✅ Connected to {st.session_state.custom_mqtt_config['MQTT_BROKER']}")
+        st.text(f"Status: {st.session_state.status_message}")
+        
+        if st.button("🔌 Disconnect", use_container_width=True):
+            st.session_state.mqtt_client.disconnect()
+            st.session_state.mqtt_client = None
+            st.info("Disconnected from MQTT broker")
+            st.rerun()
+    elif st.session_state.use_custom_config:
+        st.info("⏳ Connecting...")
+    else:
+        st.info("Configure MQTT to connect")
 
 # Main Content
+if not (st.session_state.mqtt_client and st.session_state.mqtt_client.connected):
+    st.error("❌ Not Connected")
+    st.warning("Please configure MQTT settings in the sidebar and connect first.")
+    st.info("""
+    ### Getting Started:
+    1. Enter your MQTT broker details in the sidebar
+    2. Click "✅ Save & Connect" button
+    3. Once connected, you can upload and send BIN files
+    """)
+    st.stop()
+
+# Only show file upload if connected
 col1, col2 = st.columns([2, 1])
 
 with col1:
@@ -425,82 +519,29 @@ if uploaded_file is not None:
 # Instructions
 with st.expander("ℹ️ How it works"):
     st.markdown("""
-    1. **Connect to MQTT**: Click the "Connect" button in the sidebar to establish connection
+    ### Protocol Flow:
+    1. **Connect to MQTT**: Enter broker details in sidebar and click "Save & Connect"
     2. **Upload BIN File**: Select a .bin file to upload
     3. **Click Start**: Initiates the device handshake protocol
     
-    **Protocol Flow:**
-    - **Step 1**: Sends handshake payload (T=14, S=86) and waits for device response
-    - **Step 2**: Sends second payload with URL and CRC info (T=15, S=78) and waits for response
-    - **Step 3**: Sends download start command (T=16, S=86) to begin file transfer
-    - **Step 4**: Device requests file chunks via offset/size, server responds with requested data
-    - **Step 5**: Repeat until all file data has been sent
+    ### Message Sequence:
+    - **Step 1**: Sends handshake (T=14) → waits for device response
+    - **Step 2**: Sends download info (T=15) with URL/CRC → waits for response
+    - **Step 3**: Sends download start (T=16) → waits for device request
+    - **Step 4**: Device requests chunks via offset/size (T=14) → app responds
+    - **Step 5**: Repeat until all file data sent
     
-    **Features:**
-    - Request-based protocol: Device controls chunk requests
-    - Base64-encoded binary data transmission
+    ### Required Topics:
+    - **Send To**: Your command topic (e.g., vehicle/tx_cmd)
+    - **Listen On**: Your data topic (e.g., vehicle/bin_Data/data)
+    
+    ### Features:
+    - Request-based protocol (device controls chunk requests)
+    - Base64-encoded binary data
     - Real-time progress tracking
     - SSL/TLS encrypted MQTT connection
-    - Stop button to halt transmission at any time
-    
-    **Payload Formats:**
-    
-    *Step 1 - Initial Handshake:*
-    ```json
-    {
-      "T": 14,
-      "S": 86,
-      "D": 1
-    }
-    ```
-    
-    *Step 2 - Download Info:*
-    ```json
-    {
-      "T": 15,
-      "S": 78,
-      "D": {
-        "url": "https://dev-api-apfc.peepul.farm/v1.0/devices/test-api-get/bytes-data?file_key=FOTA/MOTOR_STARTER_ADC_V1.0.bin",
-        "crc": 811448179,
-        "size": 162536
-      }
-    }
-    ```
-    
-    *Step 3 - Download Command:*
-    ```json
-    {
-      "T": 16,
-      "S": 86,
-      "D": 1
-    }
-    ```
-    
-    *Step 4 - Device Data Request:*
-    ```json
-    {
-      "T": 14,
-      "S": 86,
-      "D": {
-        "offset": 0,
-        "size": 256
-      }
-    }
-    ```
-    
-    *Response - File Chunk Data:*
-    ```json
-    {
-      "T": 14,
-      "S": 86,
-      "D": {
-        "offset": 0,
-        "size": 256,
-        "data": "<base64_encoded_binary_data>"
-      }
-    }
-    ```
+    - Stop button to halt transmission anytime
     """)
 
 st.divider()
-st.caption("🔒 Secure MQTT Connection | BIN File Uploader v1.0")
+st.caption("🔒 Secure MQTT Connection | BIN File Uploader v2.0")
