@@ -113,8 +113,9 @@ class MQTTClient:
         try:
             cfg = config if config else self.config
             self.client.connect(cfg["MQTT_BROKER"], cfg["MQTT_PORT"], keepalive=60)
+            # Only subscribe to the DATA topic where device sends responses
+            # Do NOT subscribe to TX_COMMAND_TOPIC (that's where we publish)
             self.client.subscribe(cfg["MQTT_TOPIC"], qos=1)
-            self.client.subscribe(cfg["MQTT_TX_COMMAND_TOPIC"], qos=1)
             self.client.loop_start()
             return True
         except Exception as e:
@@ -149,27 +150,39 @@ class MQTTClient:
                 break
 
 def send_initial_payload(mqtt_client, status_placeholder):
-    """Send initial handshake payload"""
+    """Send initial handshake payload and wait for confirmation"""
+    # Clear any stale messages before sending
+    mqtt_client.clear_response_queue()
+    time.sleep(0.5)  # Small delay to ensure queue is empty
+    
     payload = json.dumps({"T": 14, "S": 86, "D": 1})
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
     status_placeholder.info("📤 Sent initial payload (T=14, S=86, D=1) to " + cfg["MQTT_TX_COMMAND_TOPIC"])
-    status_placeholder.info("⏳ Waiting for response... (30 seconds)")
+    status_placeholder.info("⏳ Waiting for response with T=14, S=96... (30 seconds)")
     
-    # Wait longer for initial response
+    # Wait for specific response: T=14, S=96, D=3
     for attempt in range(30):
         response = mqtt_client.wait_for_response(timeout=1)
         if response:
-            status_placeholder.success(f"✅ Received response: T={response.get('T')}, S={response.get('S')}, D={response.get('D')}")
-            return response
-        if attempt % 5 == 0:
-            status_placeholder.info(f"⏳ Waiting... ({attempt + 1}/30s)")
+            if response.get('T') == 14 and response.get('S') == 96:
+                status_placeholder.success(f"✅ Received expected response: T={response.get('T')}, S={response.get('S')}, D={response.get('D')}")
+                mqtt_client.clear_response_queue()  # Clear any pending messages
+                return response
+            else:
+                status_placeholder.warning(f"⚠️ Received response but not matching pattern (T={response.get('T')}, S={response.get('S')}). Waiting for T=14, S=96...")
+        if attempt % 5 == 0 and attempt > 0:
+            status_placeholder.info(f"⏳ Waiting... ({attempt}/30s)")
     
-    status_placeholder.error("❌ No response received for initial payload (timeout)")
+    status_placeholder.error("❌ No matching response received for initial payload (timeout)")
     return None
 
 def send_second_payload(mqtt_client, status_placeholder):
-    """Send second payload with URL and CRC info"""
+    """Send second payload with URL and CRC info, and wait for exact confirmation"""
+    # Clear any stale messages before sending
+    mqtt_client.clear_response_queue()
+    time.sleep(0.5)  # Small delay to ensure queue is empty
+    
     payload = json.dumps({
         "T": 15,
         "S": 78,
@@ -182,37 +195,48 @@ def send_second_payload(mqtt_client, status_placeholder):
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
     status_placeholder.info("📤 Sent second payload (T=15, S=78) with URL and CRC info to " + cfg["MQTT_TX_COMMAND_TOPIC"])
-    status_placeholder.info("⏳ Waiting for response... (30 seconds)")
+    status_placeholder.info("⏳ Waiting for response with matching T=15, S=78... (30 seconds)")
     
-    # Wait longer for response
+    # Wait for specific response: T=15, S=78, D with url/crc/size
     for attempt in range(30):
         response = mqtt_client.wait_for_response(timeout=1)
         if response:
-            status_placeholder.success(f"✅ Received response: T={response.get('T')}, S={response.get('S')}")
-            return response
-        if attempt % 5 == 0:
-            status_placeholder.info(f"⏳ Waiting... ({attempt + 1}/30s)")
+            if response.get('T') == 15 and response.get('S') == 78:
+                status_placeholder.success(f"✅ Received expected response: T={response.get('T')}, S={response.get('S')}")
+                mqtt_client.clear_response_queue()  # Clear any pending messages
+                return response
+            else:
+                status_placeholder.warning(f"⚠️ Received response but not matching pattern (T={response.get('T')}, S={response.get('S')}). Waiting for T=15, S=78...")
+        if attempt % 5 == 0 and attempt > 0:
+            status_placeholder.info(f"⏳ Waiting... ({attempt}/30s)")
     
-    status_placeholder.error("❌ No response received for second payload (timeout)")
+    status_placeholder.error("❌ No matching response received for second payload (timeout)")
     return None
 
 def send_download_command(mqtt_client, status_placeholder):
-    """Send download start command"""
+    """Send download start command to vehicle/tx_cmd topic to confirm start"""
+    # Clear any stale messages before sending
+    mqtt_client.clear_response_queue()
+    time.sleep(0.5)  # Small delay to ensure queue is empty
+    
     payload = json.dumps({"T": 16, "S": 86, "D": 1})
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
     status_placeholder.info("📤 Sent download command (T=16, S=86, D=1) to " + cfg["MQTT_TX_COMMAND_TOPIC"])
     status_placeholder.info("⏳ Waiting for first offset/size request... (30 seconds)")
     
-    # Wait longer for first device request
+    # Wait longer for first device request with offset and size
     for attempt in range(30):
         response = mqtt_client.wait_for_response(timeout=1)
         if response and response.get("T") == 14:
             req_data = response.get("D", {})
-            status_placeholder.success(f"✅ Received first request: offset={req_data.get('offset')}, size={req_data.get('size')}")
-            return response
-        if attempt % 5 == 0:
-            status_placeholder.info(f"⏳ Waiting for device request... ({attempt + 1}/30s)")
+            # Check if this is an offset/size request (has offset and size fields)
+            if "offset" in req_data and "size" in req_data:
+                status_placeholder.success(f"✅ Received first request: offset={req_data.get('offset')}, size={req_data.get('size')}")
+                mqtt_client.clear_response_queue()  # Clear any pending messages
+                return response
+        if attempt % 5 == 0 and attempt > 0:
+            status_placeholder.info(f"⏳ Waiting for device request... ({attempt}/30s)")
     
     status_placeholder.error("❌ No device request received (timeout)")
     return None
@@ -229,6 +253,8 @@ def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder,
         # Extract the requested bytes from the file
         end_offset = min(offset + size, len(file_bytes))
         chunk = file_bytes[offset:end_offset]
+        decimal_data = list(chunk)
+
         
         if len(chunk) == 0:
             status_placeholder.error("❌ Invalid offset/size - no data to send")
@@ -241,7 +267,9 @@ def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder,
             "D": {
                 "offset": offset,
                 "size": len(chunk),
-                "data": base64.b64encode(chunk).decode('utf-8')
+                "data": base64.b64encode(chunk).decode('utf-8'),
+                # "data_dec": list(chunk)
+
             }
         })
         
@@ -264,7 +292,7 @@ def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder
     mqtt_client.clear_response_queue()
     
     try:
-        # Step 1: Send initial payload
+        # Step 1: Send initial payload and wait for response (T=14, S=96)
         status_placeholder.info("🚀 Starting BIN file transmission...")
         response1 = send_initial_payload(mqtt_client, status_placeholder)
         if not response1:
@@ -276,7 +304,7 @@ def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder
         
         time.sleep(1)
         
-        # Step 2: Send second payload with URL and CRC
+        # Step 2: Send second payload and wait for response (T=15, S=78)
         response2 = send_second_payload(mqtt_client, status_placeholder)
         if not response2:
             st.session_state.is_sending = False
@@ -287,7 +315,7 @@ def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder
         
         time.sleep(1)
         
-        # Step 3: Send download command
+        # Step 3: Send download command and wait for first offset/size request
         response3 = send_download_command(mqtt_client, status_placeholder)
         if not response3:
             st.session_state.is_sending = False
@@ -297,9 +325,12 @@ def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder
             return
         
         # Step 4: Handle continuous offset/size requests
-        status_placeholder.info("📦 Ready to send file chunks. Waiting for device data requests...")
+        status_placeholder.info("📦 Ready to send file chunks. Listening for device data requests...")
         request_count = 0
         last_offset = -1
+        last_size = -1
+        last_send_time = 0
+        MIN_INTERVAL_BETWEEN_SENDS = 2  # Minimum seconds between sending responses
         
         while st.session_state.get("is_sending", False):
             response = mqtt_client.wait_for_response(timeout=10)
@@ -310,10 +341,15 @@ def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder
                 current_offset = req_data.get("offset", -1)
                 current_size = req_data.get("size", 0)
                 
-                # Only process if it's a new request (different offset)
-                if current_offset != last_offset:
+                # Check if this is truly a new request (different offset/size or enough time has passed)
+                is_new_request = (current_offset != last_offset or current_size != last_size)
+                time_since_last_send = time.time() - last_send_time
+                
+                if is_new_request and time_since_last_send >= MIN_INTERVAL_BETWEEN_SENDS:
                     request_count += 1
                     last_offset = current_offset
+                    last_size = current_size
+                    last_send_time = time.time()
                     status_placeholder.info(f"📋 Request #{request_count}: offset={current_offset}, size={current_size}")
                     
                     if not handle_offset_request(response, file_bytes, mqtt_client, status_placeholder, progress_placeholder):
@@ -321,10 +357,18 @@ def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder
                     
                     # Wait before accepting next request
                     status_placeholder.info(f"✅ Chunk sent. Waiting for next request...")
-                    time.sleep(1)
+                    time.sleep(MIN_INTERVAL_BETWEEN_SENDS)
+                elif not is_new_request and time_since_last_send >= MIN_INTERVAL_BETWEEN_SENDS:
+                    # Duplicate request - send the same data again
+                    last_send_time = time.time()
+                    status_placeholder.info(f"🔄 Duplicate request received (offset={current_offset}, size={current_size}). Resending data...")
+                    if not handle_offset_request(response, file_bytes, mqtt_client, status_placeholder, progress_placeholder):
+                        break
+                    time.sleep(MIN_INTERVAL_BETWEEN_SENDS)
                 else:
-                    status_placeholder.warning(f"⚠️ Duplicate request ignored (offset={current_offset})")
-                    time.sleep(0.5)
+                    # Too soon - ignore and wait longer
+                    if not is_new_request:
+                        status_placeholder.warning(f"⚠️ Duplicate request too soon (offset={current_offset}). Ignoring...")
             else:
                 if response is None:
                     status_placeholder.info(f"⏳ Waiting for device request (#{request_count + 1})...")
@@ -474,8 +518,8 @@ with col1:
     if uploaded_file is not None:
         st.success(f"✅ File selected: {uploaded_file.name}")
         st.info(f"📊 File size: {uploaded_file.size:,} bytes")
-        st.info(f"📦 Will send in {(uploaded_file.size + CHUNK_SIZE - 1) // CHUNK_SIZE} chunks of {CHUNK_SIZE} bytes")
-        st.info(f"⏱️ Interval: {SEND_INTERVAL} seconds between chunks")
+        # st.info(f"📦 Will send in {(uploaded_file.size + CHUNK_SIZE - 1) // CHUNK_SIZE} chunks of {CHUNK_SIZE} bytes")
+        # st.info(f"⏱️ Interval: {SEND_INTERVAL} seconds between chunks")
 
 with col2:
     st.subheader("📊 Transmission Stats")
@@ -485,8 +529,8 @@ with col2:
         total_time = num_chunks * SEND_INTERVAL - SEND_INTERVAL  # Last chunk doesn't wait
         
         st.metric("Total Size", f"{total_size:,} bytes")
-        st.metric("Number of Chunks", num_chunks)
-        st.metric("Est. Time", f"{total_time}s")
+        # st.metric("Number of Chunks", num_chunks)
+        # st.metric("Est. Time", f"{total_time}s")
 
 # Send Button
 st.divider()
