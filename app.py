@@ -159,8 +159,8 @@ def send_initial_payload(mqtt_client, status_placeholder):
     payload = json.dumps({"T": 14, "S": 86, "D": 1})
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
-    status_placeholder.info("📤 Sent initial payload (T=14, S=86, D=1) to " + cfg["MQTT_TX_COMMAND_TOPIC"])
-    status_placeholder.info("⏳ Waiting for response with T=14, S=96... (30 seconds)")
+    status_placeholder.info("📤 Sent initial payload  to " + cfg["MQTT_TX_COMMAND_TOPIC"])
+    status_placeholder.info("⏳ Waiting for response . (30 seconds)")
     
     # Wait for specific response: T=14, S=96, D=3
     for attempt in range(30):
