@@ -165,7 +165,7 @@ def send_initial_payload(mqtt_client, status_placeholder):
     for attempt in range(30):
         response = mqtt_client.wait_for_response(timeout=1)
         if response:
-            if response.get('T') == 14 and response.get('S') == 96:
+            if response.get('T') == 45 and response.get('S') == 96:
                 status_placeholder.success(f"✅ Received expected response: T={response.get('T')}, S={response.get('S')}, D={response.get('D')}")
                 mqtt_client.clear_response_queue()  # Clear any pending messages
                 return response
@@ -201,7 +201,7 @@ def send_second_payload(mqtt_client, status_placeholder):
     for attempt in range(30):
         response = mqtt_client.wait_for_response(timeout=1)
         if response:
-            if response.get('T') == 15 and response.get('S') == 78:
+            if response.get('T') == 46 and response.get('S') == 78:
                 status_placeholder.success(f"✅ Received expected response: T={response.get('T')}, S={response.get('S')}")
                 mqtt_client.clear_response_queue()  # Clear any pending messages
                 return response
