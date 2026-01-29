@@ -196,7 +196,7 @@ def send_second_payload(mqtt_client, status_placeholder):
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
     status_placeholder.info("📤 Sent second payload (T=15, S=78) with URL and CRC info to " + cfg["MQTT_TX_COMMAND_TOPIC"])
-    status_placeholder.info("⏳ Waiting for response with matching T=15, S=78... (30 seconds)")
+    status_placeholder.info("⏳ Waiting for response with matching (30 seconds)")
     
     # Wait for specific response: T=15, S=78, D with url/crc/size
     for attempt in range(30):
