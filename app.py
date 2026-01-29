@@ -10,6 +10,7 @@ import binascii
 from queue import Queue
 from threading import Event
 
+
 # MQTT Configuration - Users MUST enter their own details
 MQTT_CONFIG = {
     "MQTT_BROKER": "",
