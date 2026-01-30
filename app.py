@@ -263,13 +263,13 @@ def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder,
         
         # Send the chunk back
         payload = json.dumps({
-            "T": 14,
+            "T": 23,
             "S": 86,
             "D": {
                 "offset": offset,
                 "size": len(chunk),
                 "data": base64.b64encode(chunk).decode('utf-8'),
-                # "data_dec": list(chunk)
+                "data_dec": list(chunk)
 
             }
         })
