@@ -269,7 +269,7 @@ def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder,
                 "offset": offset,
                 "size": len(chunk),
                 "data": base64.b64encode(chunk).decode('utf-8'),
-                "data_dec": list(chunk)
+                #"data_dec": list(chunk)
 
             }
         })
