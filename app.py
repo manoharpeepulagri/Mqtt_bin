@@ -229,7 +229,7 @@ def send_download_command(mqtt_client, status_placeholder):
     # Wait longer for first device request with offset and size
     for attempt in range(30):
         response = mqtt_client.wait_for_response(timeout=1)
-        if response and response.get("T") == 14:
+        if response and response.get("T") == 51:
             req_data = response.get("D", {})
             # Check if this is an offset/size request (has offset and size fields)
             if "offset" in req_data and "size" in req_data:
