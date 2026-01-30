@@ -336,7 +336,7 @@ def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder
         while st.session_state.get("is_sending", False):
             response = mqtt_client.wait_for_response(timeout=10)
             
-            if response and response.get("T") == 14:
+            if response and response.get("T") == 51:
                 # Extract offset and size from device request
                 req_data = response.get("D", {})
                 current_offset = req_data.get("offset", -1)
