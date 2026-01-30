@@ -278,6 +278,10 @@ def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder,
         mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
         status_placeholder.success(f"✅ Sent {list(chunk)} ")
         status_placeholder.success(f"✅ Sent {len(chunk)} bytes from offset {offset} to {cfg['MQTT_TX_COMMAND_TOPIC']}")
+
+        # Display the full decimal list in a scrollable block
+        status_placeholder.markdown("**Decimal Data Sent:**")
+        status_placeholder.code(f"{decimal_data}")
         
         
         # Calculate and show progress
