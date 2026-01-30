@@ -276,7 +276,9 @@ def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder,
         
         cfg = mqtt_client.config
         mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
+        status_placeholder.success(f"✅ Sent {list(chunk))} bytes from offset {offset}")
         status_placeholder.success(f"✅ Sent {len(chunk)} bytes from offset {offset} to {cfg['MQTT_TX_COMMAND_TOPIC']}")
+        
         
         # Calculate and show progress
         progress = (end_offset / len(file_bytes)) if len(file_bytes) > 0 else 0
