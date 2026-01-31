@@ -105,8 +105,10 @@ class MQTTClient:
     def on_message(self, client, userdata, msg):
         """Handle incoming MQTT messages"""
         try:
-            payload = json.loads(msg.payload.decode('utf-8'))
-            self.response_queue.put(payload)
+            raw_payload = msg.payload.decode('utf-8')
+            print(f"DEBUG: Received: {raw_payload}") # Check your terminal/console
+            payload = json.loads(raw_payload)
+            self.response_queue.put(payload) 
         except:
             pass
     
@@ -243,145 +245,179 @@ def send_download_command(mqtt_client, status_placeholder):
     return None
 
 def handle_offset_request(response, file_bytes, mqtt_client, status_placeholder, progress_placeholder):
-    """Handle offset and size request from device and send corresponding data"""
     try:
-        data = response.get("D", {})
-        offset = data.get("offset", 0)
-        size = data.get("size", 256)
-        
-        status_placeholder.info(f"📋 Device requesting: offset={offset}, size={size}")
-        
-        # Extract the requested bytes from the file
-        end_offset = min(offset + size, len(file_bytes))
-        chunk = file_bytes[offset:end_offset]
-        decimal_data = list(chunk)
-
-        
-        if len(chunk) == 0:
-            status_placeholder.error("❌ Invalid offset/size - no data to send")
+        # 1️⃣ Validate message
+        if not isinstance(response, dict):
             return False
-        
-        # Send the chunk back
-        payload = json.dumps({
+
+        if response.get("T") != 51:
+            return False
+
+        req = response.get("D")
+        if not isinstance(req, dict):
+            status_placeholder.warning(f"⚠️ Invalid request D={req}")
+            return False
+
+        # 2️⃣ Extract offset & size dynamically
+        offset = int(req.get("offset", -1))
+        size = int(req.get("size", 0))
+
+        file_size = len(file_bytes)
+
+        if offset < 0 or size <= 0 or offset >= file_size:
+            status_placeholder.error(
+                f"❌ Invalid offset/size (offset={offset}, size={size}, file={file_size})"
+            )
+            return False
+
+        # 3️⃣ Slice EXACTLY what device asked
+        end = min(offset + size, file_size)
+        chunk = file_bytes[offset:end]
+
+        if not chunk:
+            status_placeholder.warning("⚠️ No data left to send (EOF)")
+            return False
+
+        # 4️⃣ Build response payload
+        payload = {
             "T": 23,
-            "S": 86,
+            "S": response.get("S", 86),
             "D": {
                 "offset": offset,
-                "size": len(chunk),
-                "data": base64.b64encode(chunk).decode('utf-8'),
-                #"data_dec": list(chunk)
-
+                "size": len(chunk),     # 👈 actual size sent
+                "data": base64.b64encode(chunk).decode("utf-8")
             }
-        })
-        
-        cfg = mqtt_client.config
-        mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
-        status_placeholder.success(f"✅ Sent {list(chunk)} ")
-        status_placeholder.success(f"✅ Sent {len(chunk)} bytes from offset {offset} to {cfg['MQTT_TX_COMMAND_TOPIC']}")
+        }
 
-        # Display the full decimal list in a scrollable block
-        status_placeholder.markdown("**Decimal Data Sent:**")
-        status_placeholder.code(f"{decimal_data}")
-        
-        
-        # Calculate and show progress
-        progress = (end_offset / len(file_bytes)) if len(file_bytes) > 0 else 0
+        cfg = mqtt_client.config
+        mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], json.dumps(payload))
+
+        # 5️⃣ UI + progress
+        status_placeholder.success(
+            f"✅ Sent bytes [{offset}:{end}] ({len(chunk)} bytes)"
+        )
+
+        progress = end / file_size
         progress_placeholder.progress(progress)
-        
+
         return True
+
     except Exception as e:
-        status_placeholder.error(f"❌ Error handling offset request: {str(e)}")
+        status_placeholder.error(f"❌ Offset handler error: {e}")
         return False
 
+
 def send_bin_file_chunks(file_bytes, filename, mqtt_client, progress_placeholder, status_placeholder):
-    """Handle the complete bin file transmission flow"""
+    """Handle the complete bin file transmission flow with robust type checking"""
     mqtt_client.file_bytes = file_bytes
     mqtt_client.clear_response_queue()
     
     try:
-        # Step 1: Send initial payload and wait for response (T=14, S=96)
+        # Step 1: Handshake (T=14)
         status_placeholder.info("🚀 Starting BIN file transmission...")
         response1 = send_initial_payload(mqtt_client, status_placeholder)
-        if not response1:
+        if not response1 or not st.session_state.get("is_sending", False):
             st.session_state.is_sending = False
-            return
-        
-        if not st.session_state.get("is_sending", False):
             return
         
         time.sleep(1)
         
-        # Step 2: Send second payload and wait for response (T=15, S=78)
+        # Step 2: Metadata/URL (T=15)
         response2 = send_second_payload(mqtt_client, status_placeholder)
-        if not response2:
+        if not response2 or not st.session_state.get("is_sending", False):
             st.session_state.is_sending = False
-            return
-        
-        if not st.session_state.get("is_sending", False):
             return
         
         time.sleep(1)
         
-        # Step 3: Send download command and wait for first offset/size request
+        # Step 3: Start Command (T=16)
         response3 = send_download_command(mqtt_client, status_placeholder)
-        if not response3:
+        if not response3 or not st.session_state.get("is_sending", False):
             st.session_state.is_sending = False
             return
         
-        if not st.session_state.get("is_sending", False):
-            return
-        
-        # Step 4: Handle continuous offset/size requests
+        # Step 4: Continuous Data Requests
         status_placeholder.info("📦 Ready to send file chunks. Listening for device data requests...")
         request_count = 0
         last_offset = -1
         last_size = -1
         last_send_time = 0
-        MIN_INTERVAL_BETWEEN_SENDS = 2  # Minimum seconds between sending responses
+        MIN_INTERVAL_BETWEEN_SENDS = 1.5  # Adjusted based on your debug log speed
+        
+        # Handle the first device request that came in response3
+        if response3 and response3.get("T") == 51:
+            req_data = response3.get("D", {})
+            if isinstance(req_data, dict) and "offset" in req_data and "size" in req_data:
+                request_count += 1
+                last_offset = req_data.get("offset")
+                last_size = req_data.get("size")
+                last_send_time = time.time()
+                status_placeholder.info(f"📋 Request #{request_count}: offset={last_offset}, size={last_size}")
+                if not handle_offset_request(response3, file_bytes, mqtt_client, status_placeholder, progress_placeholder):
+                    st.session_state.is_sending = False
+                    return
+                status_placeholder.info(f"✅ Chunk sent. Waiting for next request...")
         
         while st.session_state.get("is_sending", False):
             response = mqtt_client.wait_for_response(timeout=10)
             
-            if response and response.get("T") == 51:
-                # Extract offset and size from device request
-                req_data = response.get("D", {})
-                current_offset = req_data.get("offset", -1)
-                current_size = req_data.get("size", 0)
+            # --- FIX: TYPE CHECKING START ---
+            if response is not None and isinstance(response, dict):
+                msg_type = response.get("T")
                 
-                # Check if this is truly a new request (different offset/size or enough time has passed)
-                is_new_request = (current_offset != last_offset or current_size != last_size)
-                time_since_last_send = time.time() - last_send_time
+                # Handle actual data requests
+                if msg_type == 51:
+                    req_data = response.get("D", {})
+                    # Validate D is a dict and contains required fields
+                    if not isinstance(req_data, dict) or "offset" not in req_data or "size" not in req_data:
+                        status_placeholder.warning(f"⚠️ Invalid request format: D={req_data}")
+                        continue
+                    
+                    try:
+                        current_offset = int(req_data.get("offset", -1))
+                        current_size = int(req_data.get("size", 0))
+                    except (ValueError, TypeError) as e:
+                        status_placeholder.warning(f"⚠️ Invalid offset/size values: {e}")
+                        continue
+                    
+                    time_since_last_send = time.time() - last_send_time
+                    
+                    # Check if it's a new request or a valid retry
+                    if current_offset != last_offset or time_since_last_send >= MIN_INTERVAL_BETWEEN_SENDS:
+                        request_count += 1
+                        last_offset = current_offset
+                        last_size = current_size
+                        last_send_time = time.time()
+                        
+                        status_placeholder.info(f"📋 Request #{request_count}: offset={current_offset}, size={current_size}")
+                        
+                        if not handle_offset_request(response, file_bytes, mqtt_client, status_placeholder, progress_placeholder):
+                            break
+                        
+                        status_placeholder.info(f"✅ Chunk sent. Waiting for next request...")
+                    else:
+                        # Throttling duplicate requests sent too quickly
+                        status_placeholder.warning(f"⚠️ Throttling: Request for offset {current_offset} ignored.")
                 
-                if is_new_request and time_since_last_send >= MIN_INTERVAL_BETWEEN_SENDS:
-                    request_count += 1
-                    last_offset = current_offset
-                    last_size = current_size
-                    last_send_time = time.time()
-                    status_placeholder.info(f"📋 Request #{request_count}: offset={current_offset}, size={current_size}")
-                    
-                    if not handle_offset_request(response, file_bytes, mqtt_client, status_placeholder, progress_placeholder):
-                        break
-                    
-                    # Wait before accepting next request
-                    status_placeholder.info(f"✅ Chunk sent. Waiting for next request...")
-                    time.sleep(MIN_INTERVAL_BETWEEN_SENDS)
-                elif not is_new_request and time_since_last_send >= MIN_INTERVAL_BETWEEN_SENDS:
-                    # Duplicate request - send the same data again
-                    last_send_time = time.time()
-                    status_placeholder.info(f"🔄 Duplicate request received (offset={current_offset}, size={current_size}). Resending data...")
-                    if not handle_offset_request(response, file_bytes, mqtt_client, status_placeholder, progress_placeholder):
-                        break
-                    time.sleep(MIN_INTERVAL_BETWEEN_SENDS)
+                # Handle status updates seen in your debug logs
+                elif msg_type == 47:
+                    status_placeholder.info(f"ℹ️ Device status update received (T=47, D={response.get('D')})")
+                
                 else:
-                    # Too soon - ignore and wait longer
-                    if not is_new_request:
-                        status_placeholder.warning(f"⚠️ Duplicate request too soon (offset={current_offset}). Ignoring...")
+                    status_placeholder.warning(f"⚠️ Received message with T={msg_type}. Waiting for T=51...")
+
+            elif response is not None:
+                # This catches the 'int' or other non-dict types that caused your crash
+                status_placeholder.error(f"❌ Received malformed data: {response} (Type: {type(response).__name__})")
+                # We skip this specific item and continue the loop instead of crashing
+                continue
+            
             else:
-                if response is None:
-                    status_placeholder.info(f"⏳ Waiting for device request (#{request_count + 1})...")
-                else:
-                    status_placeholder.warning(f"⚠️ Ignoring message with T={response.get('T')} (waiting for T=14)")
-                time.sleep(1)
+                # Timeout occurred
+                status_placeholder.info(f"⏳ Waiting for device request (#{request_count + 1})...")
+            # --- FIX: TYPE CHECKING END ---
+            
+            time.sleep(0.1) # Small sleep to prevent CPU spiking
         
         if st.session_state.get("is_sending", False):
             status_placeholder.success(f"✅ Transmission complete! Handled {request_count} data requests")
