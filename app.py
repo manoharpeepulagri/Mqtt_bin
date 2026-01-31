@@ -160,10 +160,10 @@ def send_initial_payload(mqtt_client, status_placeholder):
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
     status_placeholder.info("📤 Sent initial payload  to " + cfg["MQTT_TX_COMMAND_TOPIC"])
-    status_placeholder.info("⏳ Waiting for response . (30 seconds)")
+    status_placeholder.info("⏳ Waiting for response . (100 seconds)")
     
     # Wait for specific response: T=14, S=96, D=3
-    for attempt in range(30):
+    for attempt in range(100):
         response = mqtt_client.wait_for_response(timeout=1)
         if response:
             if response.get('T') == 45 :
@@ -173,7 +173,7 @@ def send_initial_payload(mqtt_client, status_placeholder):
             else:
                 status_placeholder.warning(f"⚠️ Received response but not matching pattern (T={response.get('T')}, S={response.get('S')}). Waiting for T=14, S=96...")
         if attempt % 5 == 0 and attempt > 0:
-            status_placeholder.info(f"⏳ Waiting... ({attempt}/30s)")
+            status_placeholder.info(f"⏳ Waiting... ({attempt}/110s)")
     
     status_placeholder.error("❌ No matching response received for initial payload (timeout)")
     return None
@@ -196,10 +196,10 @@ def send_second_payload(mqtt_client, status_placeholder):
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
     status_placeholder.info("📤 Sent second payload (T=15, S=78) with URL and CRC info to " + cfg["MQTT_TX_COMMAND_TOPIC"])
-    status_placeholder.info("⏳ Waiting for response with matching (30 seconds)")
+    status_placeholder.info("⏳ Waiting for response with matching (110 seconds)")
     
     # Wait for specific response: T=15, S=78, D with url/crc/size
-    for attempt in range(30):
+    for attempt in range(110):
         response = mqtt_client.wait_for_response(timeout=1)
         if response:
             if response.get('T') == 46:
@@ -209,7 +209,7 @@ def send_second_payload(mqtt_client, status_placeholder):
             else:
                 status_placeholder.warning(f"⚠️ Received response but not matching pattern (T={response.get('T')}, S={response.get('S')}). Waiting for T=15, S=78...")
         if attempt % 5 == 0 and attempt > 0:
-            status_placeholder.info(f"⏳ Waiting... ({attempt}/30s)")
+            status_placeholder.info(f"⏳ Waiting... ({attempt}/110s)")
     
     status_placeholder.error("❌ No matching response received for second payload (timeout)")
     return None
@@ -224,10 +224,10 @@ def send_download_command(mqtt_client, status_placeholder):
     cfg = mqtt_client.config
     mqtt_client.publish(cfg["MQTT_TX_COMMAND_TOPIC"], payload)
     status_placeholder.info("📤 Sent download command (T=16, S=86, D=1) to " + cfg["MQTT_TX_COMMAND_TOPIC"])
-    status_placeholder.info("⏳ Waiting for first offset/size request... (30 seconds)")
+    status_placeholder.info("⏳ Waiting for first offset/size request... (100 seconds)")
     
     # Wait longer for first device request with offset and size
-    for attempt in range(30):
+    for attempt in range(100):
         response = mqtt_client.wait_for_response(timeout=1)
         if response and response.get("T") == 51:
             req_data = response.get("D", {})
@@ -237,7 +237,7 @@ def send_download_command(mqtt_client, status_placeholder):
                 mqtt_client.clear_response_queue()  # Clear any pending messages
                 return response
         if attempt % 5 == 0 and attempt > 0:
-            status_placeholder.info(f"⏳ Waiting for device request... ({attempt}/30s)")
+            status_placeholder.info(f"⏳ Waiting for device request... ({attempt}/100s)")
     
     status_placeholder.error("❌ No device request received (timeout)")
     return None
